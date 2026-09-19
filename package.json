@@ -1,7 +1,4 @@
 {
-  "name": "egg-waffle-final",
-  "type": "module",
-  "dependencies": {
-    "@vercel/og": "0.6.2"
-  }
+  "name": "egg-waffle-v63",
+  "type": "module"
 }

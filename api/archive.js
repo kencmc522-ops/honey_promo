@@ -1,57 +1,110 @@
+
 export const config = { runtime: 'nodejs' };
-import { Resvg } from '@resvg/resvg-js';
 
 export default async function handler(req, res) {
-  const IMGUR_ID = process.env.IMGUR_CLIENT_ID || '546c25a59c58ad7';
-  const isCron = req.query && req.query.cron === '1';
+  if (req.query.cron !== '1' && req.method !== 'GET' && req.method !== 'POST') {
+    // allow manual trigger ?cron=1
+    return res.status(405).json({ error: 'use ?cron=1' });
+  }
 
-  if (req.method === 'GET' && !isCron) {
-    return res.status(200).json({gallery: global._gallery || [], tip: "Add ?cron=1 to trigger PNG upload"});
+  const HF_TOKEN = process.env.HF_TOKEN;
+  const IG_ID = process.env.IG_ID;
+  const IG_TOKEN = process.env.IG_TOKEN;
+  const IMGUR_CLIENT_ID = process.env.IMGUR_CLIENT_ID || '546c25a59c58ad7';
+  const LOGO_URL = process.env.LOGO_URL || 'https://upload.cc/i1/2026/09/19/irPUSQ.png';
+
+  if (!HF_TOKEN || !IG_ID || !IG_TOKEN) {
+    return res.status(500).json({ error: 'Missing HF_TOKEN / IG_ID / IG_TOKEN env' });
   }
 
   try {
-    const today = new Date().toLocaleDateString('zh-HK',{month:'short',day:'numeric'});
-    const menus = [
-      {name:'芝麻', price:'$70', desc:'黑芝麻爆餡'},
-      {name:'原味', price:'$60', desc:'經典港式'},
-      {name:'朱古力', price:'$75', desc:'比利時朱古力'},
-      {name:'抹茶', price:'$75', desc:'京都抹茶'},
+    // A1 日常刷存在感 - 輪播文案
+    const dailyCopys = [
+      "今天也要開心・日常日常・小小開店日常",
+      "曬住太陽等你來・甜蜜密營業中",
+      "吉祥物今日也在努力・甜蜜密爆餡雞蛋仔",
+      "淺木・自然光・手作的溫度",
+      "早安，今日也想見到你"
     ];
-    const item = menus[new Date().getDate() % menus.length];
-    const svg = `<svg width="1080" height="1080" xmlns="http://www.w3.org/2000/svg"><rect width="1080" height="1080" fill="#fdf6e3"/><text x="60" y="80" font-family="Arial" font-size="32" fill="#8d6e63">${today}</text><rect x="60" y="140" width="600" height="600" rx="40" fill="#ffffff"/><text x="360" y="520" text-anchor="middle" font-size="200">🧇</text><text x="720" y="280" font-family="Arial" font-size="96" font-weight="900" fill="#3e2723">${item.name}</text><text x="720" y="380" font-family="Arial" font-size="72" fill="#bf360c" font-weight="700">${item.price}</text><text x="720" y="450" font-family="Arial" font-size="36" fill="#5d4037">${item.desc}</text><text x="720" y="550" font-family="Arial" font-size="28" fill="#8d6e63">每日新鮮出爐</text><text x="60" y="1010" font-family="Arial" font-size="28" fill="#a1887f">@eggette.daily</text></svg>`;
-    
-    const resvg = new Resvg(svg, { fitTo: { mode: 'width', value: 1080 } });
-    const pngData = resvg.render().asPng();
-    const base64 = Buffer.from(pngData).toString('base64');
-    
-    const imgurRes = await fetch('https://api.imgur.com/3/image', {
-      method:'POST',
-      headers:{ 'Authorization': 'Client-ID ' + IMGUR_ID, 'Content-Type':'application/json' },
-      body: JSON.stringify({ image: base64, type:'base64' })
-    });
-    const imgurData = await imgurRes.json();
-    if (!imgurData.success) {
-      return res.status(500).json({error:'Imgur failed', detail: imgurData});
-    }
-    const permanentUrl = imgurData.data.link;
-    global._gallery = global._gallery || [];
-    global._gallery.unshift({url: permanentUrl, time: new Date().toISOString(), name: item.name});
+    const copy = dailyCopys[new Date().getDate() % dailyCopys.length];
 
-    const IG_ID = process.env.IG_ID;
-    const IG_TOKEN = process.env.IG_TOKEN;
-    let igResult = null;
-    if (IG_ID && IG_TOKEN) {
-      const caption = `${item.name} ${item.price} 今日 ${today} #雞蛋仔`;
-      const m1 = await fetch(`https://graph.facebook.com/v18.0/${IG_ID}/media?image_url=${encodeURIComponent(permanentUrl)}&caption=${encodeURIComponent(caption)}&access_token=${IG_TOKEN}`, {method:'POST'}).then(r=>r.json());
-      igResult = m1;
-      if (m1.id) {
-        await new Promise(r=>setTimeout(r,4000));
-        await fetch(`https://graph.facebook.com/v18.0/${IG_ID}/media_publish?creation_id=${m1.id}&access_token=${IG_TOKEN}`, {method:'POST'});
+    // 核心風格 Prompt - 已整合你3張參考圖的淺木系台灣文青風
+    const prompt = `masterpiece, best quality, light wood aesthetic, Taiwanese wenqing minimalism, natural window light, soft morning sunlight, light oak wood table texture, beige wall, lots of white space, healing daily life photo, a cute egg waffle mascot character with smiling face sitting on table, mascot is main character, cozy small shop, shallow depth of field, film grain, warm tone, handwritten Chinese text corner "${copy}", shop name "甜蜜密爆餡雞蛋仔" subtle small font, inspired by light wood + natural light + handwritten style, 4k, highly detailed`;
+
+    const negative = `lowres, bad anatomy, blurry, dark, neon colors, bold pop poster, crowded, too much text, text error, distorted mascot, scary, watermark`;
+
+    // 1. Call Hugging Face SDXL
+    async function callHF() {
+      let r = await fetch('https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${HF_TOKEN}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inputs: prompt, parameters: { negative_prompt: negative } })
+      });
+      if (r.status === 503) {
+        const j = await r.json().catch(()=>({estimated_time:20}));
+        await new Promise(res=>setTimeout(res, (j.estimated_time||20)*1000));
+        r = await fetch('https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${HF_TOKEN}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ inputs: prompt, parameters: { negative_prompt: negative } })
+        });
       }
+      if (!r.ok) throw new Error('HF failed: '+await r.text());
+      return Buffer.from(await r.arrayBuffer());
     }
 
-    return res.status(200).json({ success:true, permanentUrl, ig: igResult, gallery: global._gallery });
+    let imgBuffer = await callHF();
+
+    // 2. Overlay Logo (吉祥物/logo) - 用 sharp 貼去右下角
+    try {
+      const sharp = (await import('sharp')).default;
+      const logoRes = await fetch(LOGO_URL);
+      if (logoRes.ok) {
+        const logoBuf = Buffer.from(await logoRes.arrayBuffer());
+        const logoResized = await sharp(logoBuf).resize(180,180,{fit:'inside'}).png().toBuffer();
+        const meta = await sharp(imgBuffer).metadata();
+        const w = meta.width || 1024;
+        const h = meta.height || 1024;
+        imgBuffer = await sharp(imgBuffer)
+          .composite([{ input: logoResized, left: w-200, top: h-200, blend: 'over' }])
+          .jpeg({ quality: 90 })
+          .toBuffer();
+      }
+    } catch (e) {
+      console.log('logo overlay failed', e.message);
+    }
+
+    // 3. Upload to Imgur to get permanent URL for IG
+    const imgurForm = await fetch('https://api.imgur.com/3/image', {
+      method: 'POST',
+      headers: { 'Authorization': `Client-ID ${IMGUR_CLIENT_ID}` },
+      body: (()=>{ const fd = new FormData(); fd.append('image', new Blob([imgBuffer])); return fd; })()
+    }).then(r=>r.json()).catch(async ()=>{
+      // fallback base64
+      const b64 = imgBuffer.toString('base64');
+      const r2 = await fetch('https://api.imgur.com/3/image', {
+        method: 'POST',
+        headers: { 'Authorization': `Client-ID ${IMGUR_CLIENT_ID}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: b64, type: 'base64' })
+      });
+      return r2.json();
+    });
+
+    if (!imgurForm.success) throw new Error('Imgur failed: '+JSON.stringify(imgurForm));
+    const permanentUrl = imgurForm.data.link;
+
+    // 4. Post to IG
+    const caption = `${copy}\n\n甜蜜密爆餡雞蛋仔｜淺木系日常\n#雞蛋仔 #甜蜜密爆餡雞蛋仔 #香港小食 #文青`;
+
+    const m1 = await fetch(`https://graph.facebook.com/v18.0/${IG_ID}/media?image_url=${encodeURIComponent(permanentUrl)}&caption=${encodeURIComponent(caption)}&access_token=${IG_TOKEN}`, { method: 'POST' }).then(r=>r.json());
+    if (!m1.id) throw new Error('IG media create failed: '+JSON.stringify(m1));
+
+    await new Promise(r=>setTimeout(r, 6000));
+    const m2 = await fetch(`https://graph.facebook.com/v18.0/${IG_ID}/media_publish?creation_id=${m1.id}&access_token=${IG_TOKEN}`, { method: 'POST' }).then(r=>r.json());
+
+    return res.json({ success: true, permanentUrl, ig_container: m1.id, ig_publish: m2, prompt, copy });
+
   } catch (e) {
-    return res.status(500).json({error: e.message, stack: e.stack});
+    return res.status(500).json({ error: e.message, stack: e.stack });
   }
 }

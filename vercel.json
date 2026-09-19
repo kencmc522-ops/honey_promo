@@ -2,7 +2,12 @@
   "crons": [
     {
       "path": "/api/archive?cron=1",
-      "schedule": "5 12 * * *"
+      "schedule": "0 12 * * *"
     }
-  ]
+  ],
+  "functions": {
+    "api/archive.js": {
+      "maxDuration": 60
+    }
+  }
 }

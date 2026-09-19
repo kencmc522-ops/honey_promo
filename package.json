@@ -1,7 +1,8 @@
 {
-  "name": "egg-waffle-v66",
+  "name": "egg-waffle-a1",
+  "version": "8.0.0",
   "type": "module",
   "dependencies": {
-    "@resvg/resvg-js": "latest"
+    "sharp": "^0.33.0"
   }
 }

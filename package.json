@@ -1,4 +1,7 @@
 {
-  "name": "egg-waffle-v64",
-  "type": "module"
+  "name": "egg-waffle-v65",
+  "type": "module",
+  "dependencies": {
+    "@resvg/resvg-js": "1.6.0"
+  }
 }
